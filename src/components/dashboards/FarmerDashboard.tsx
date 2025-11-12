@@ -1,9 +1,10 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Plant, Bug, FirstAid, CloudSun, MapPin, Scales } from '@phosphor-icons/react'
 import { FarmerProfile } from '@/lib/types'
+import { CropScanner } from '@/components/CropScanner'
 
 interface FarmerDashboardProps {
   userName: string
@@ -11,6 +12,8 @@ interface FarmerDashboardProps {
 }
 
 export const FarmerDashboard = ({ userName, profile }: FarmerDashboardProps) => {
+  const [scannerOpen, setScannerOpen] = useState(false)
+
   return (
     <div className="space-y-6">
       <div>
@@ -74,7 +77,7 @@ export const FarmerDashboard = ({ userName, profile }: FarmerDashboardProps) => 
             </div>
           </CardHeader>
           <CardContent>
-            <Button className="w-full" size="lg">
+            <Button className="w-full" size="lg" onClick={() => setScannerOpen(true)}>
               Scan Crop Image
             </Button>
           </CardContent>
@@ -129,6 +132,8 @@ export const FarmerDashboard = ({ userName, profile }: FarmerDashboardProps) => 
           </div>
         </CardContent>
       </Card>
+
+      <CropScanner open={scannerOpen} onOpenChange={setScannerOpen} />
     </div>
   )
 }

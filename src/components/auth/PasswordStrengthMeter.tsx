@@ -1,3 +1,4 @@
+import React from 'react'
 import { CheckCircle, XCircle } from '@phosphor-icons/react'
 import { validatePassword } from '@/lib/auth'
 import { cn } from '@/lib/utils'

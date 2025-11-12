@@ -1,3 +1,4 @@
+import React from 'react'
 import { UserRole } from '@/lib/types'
 import { Plant, ChartLine, ShieldCheck } from '@phosphor-icons/react'
 import { Card } from '@/components/ui/card'

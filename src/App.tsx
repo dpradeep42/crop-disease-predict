@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import React, { useState } from 'react'
 import { Toaster } from '@/components/ui/sonner'
 import { AuthProvider, useAuth } from '@/hooks/use-auth'
 import { AuthPage } from '@/components/auth/AuthPage'

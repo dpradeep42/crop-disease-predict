@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
+import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { useKV } from '@github/spark/hooks'
 import { User, AuthSession, LoginFormData, RegisterFormData } from '@/lib/types'
 import { hashPassword, verifyPassword, createSession, isSessionValid } from '@/lib/auth'
@@ -14,10 +14,10 @@ interface AuthContextType {
   updateProfile: (updates: Partial<User>) => Promise<void>
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined)
+const AuthContext = React.createContext<AuthContextType | undefined>(undefined)
 
 export const useAuth = () => {
-  const context = useContext(AuthContext)
+  const context = React.useContext(AuthContext)
   if (!context) {
     throw new Error('useAuth must be used within AuthProvider')
   }
@@ -27,10 +27,10 @@ export const useAuth = () => {
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [users, setUsers] = useKV<User[]>('users', [])
   const [session, setSession] = useKV<AuthSession | null>('session', null)
-  const [user, setUser] = useState<User | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
+  const [user, setUser] = React.useState<User | null>(null)
+  const [isLoading, setIsLoading] = React.useState(true)
 
-  useEffect(() => {
+  React.useEffect(() => {
     const initAuth = async () => {
       if (session && isSessionValid(session) && users) {
         const currentUser = users.find(u => u.id === session.userId)

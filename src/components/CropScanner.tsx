@@ -4,6 +4,9 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Camera, Upload, X, ArrowClockwise } from '@phosphor-icons/react'
 import { toast } from 'sonner'
+import { analyzeImage, AnalysisResult } from '@/lib/disease-detection'
+import { DiseaseResults } from './DiseaseResults'
+import { useAuth } from '@/hooks/use-auth'
 
 interface CropScannerProps {
   open: boolean
@@ -11,9 +14,13 @@ interface CropScannerProps {
 }
 
 export const CropScanner = ({ open, onOpenChange }: CropScannerProps) => {
+  const { user } = useAuth()
   const [mode, setMode] = useState<'select' | 'camera' | 'upload'>('select')
   const [capturedImage, setCapturedImage] = useState<string | null>(null)
   const [stream, setStream] = useState<MediaStream | null>(null)
+  const [analyzing, setAnalyzing] = useState(false)
+  const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null)
+  const [showResults, setShowResults] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -34,6 +41,7 @@ export const CropScanner = ({ open, onOpenChange }: CropScannerProps) => {
     if (!open) {
       setMode('select')
       setCapturedImage(null)
+      setAnalysisResult(null)
       if (stream) {
         stream.getTracks().forEach(track => track.stop())
         setStream(null)
@@ -77,6 +85,7 @@ export const CropScanner = ({ open, onOpenChange }: CropScannerProps) => {
 
   const retakePhoto = () => {
     setCapturedImage(null)
+    setAnalysisResult(null)
     startCamera()
   }
 
@@ -90,16 +99,72 @@ export const CropScanner = ({ open, onOpenChange }: CropScannerProps) => {
       const reader = new FileReader()
       reader.onload = (event) => {
         setCapturedImage(event.target?.result as string)
+        setMode('upload')
       }
       reader.readAsDataURL(file)
     }
   }
 
-  const handleAnalyze = () => {
-    if (capturedImage) {
-      toast.success('Analyzing crop image...')
+  const handleAnalyze = async () => {
+    if (!capturedImage) return
+
+    setAnalyzing(true)
+    toast.loading('Analyzing image...', { id: 'analyzing' })
+
+    try {
+      const result = await analyzeImage(capturedImage)
+      setAnalysisResult(result)
+
+      if (user) {
+        await saveScanToDatabase(result)
+      }
+
+      toast.success('Analysis complete!', { id: 'analyzing' })
       onOpenChange(false)
+      setShowResults(true)
+    } catch (error) {
+      toast.error('Failed to analyze image. Please try again.', { id: 'analyzing' })
+      console.error('Analysis error:', error)
+    } finally {
+      setAnalyzing(false)
     }
+  }
+
+  const saveScanToDatabase = async (result: AnalysisResult) => {
+    if (!user || !capturedImage) return
+
+    try {
+      await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/crop_scans`,
+        {
+          method: 'POST',
+          headers: {
+            'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=minimal'
+          },
+          body: JSON.stringify({
+            user_id: user.id,
+            image_data: capturedImage,
+            is_leaf: result.leafDetection.isLeaf,
+            confidence_score: result.leafDetection.confidence,
+            disease_detected: result.diseaseDetection?.diseaseDetected,
+            disease_confidence: result.diseaseDetection?.confidence,
+            severity: result.diseaseDetection?.severity,
+            analyzed_at: new Date().toISOString()
+          })
+        }
+      )
+    } catch (error) {
+      console.error('Error saving scan:', error)
+    }
+  }
+
+  const handleReset = () => {
+    setCapturedImage(null)
+    setAnalysisResult(null)
+    setMode('select')
   }
 
   const renderSelectMode = () => (
@@ -122,7 +187,6 @@ export const CropScanner = ({ open, onOpenChange }: CropScannerProps) => {
       <Card
         className="p-6 cursor-pointer hover:border-primary transition-colors"
         onClick={() => {
-          setMode('upload')
           fileInputRef.current?.click()
         }}
       >
@@ -168,12 +232,12 @@ export const CropScanner = ({ open, onOpenChange }: CropScannerProps) => {
             <img src={capturedImage} alt="Captured crop" className="w-full h-full object-contain" />
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={retakePhoto} className="flex-1">
+            <Button variant="outline" onClick={retakePhoto} className="flex-1" disabled={analyzing}>
               <ArrowClockwise size={18} />
               Retake
             </Button>
-            <Button onClick={handleAnalyze} className="flex-1">
-              Analyze Image
+            <Button onClick={handleAnalyze} className="flex-1" disabled={analyzing}>
+              {analyzing ? 'Analyzing...' : 'Analyze Image'}
             </Button>
           </div>
         </>
@@ -196,17 +260,15 @@ export const CropScanner = ({ open, onOpenChange }: CropScannerProps) => {
           <div className="flex gap-2">
             <Button
               variant="outline"
-              onClick={() => {
-                setCapturedImage(null)
-                setMode('select')
-              }}
+              onClick={handleReset}
               className="flex-1"
+              disabled={analyzing}
             >
               <X size={18} />
               Cancel
             </Button>
-            <Button onClick={handleAnalyze} className="flex-1">
-              Analyze Image
+            <Button onClick={handleAnalyze} className="flex-1" disabled={analyzing}>
+              {analyzing ? 'Analyzing...' : 'Analyze Image'}
             </Button>
           </div>
         </>
@@ -229,7 +291,7 @@ export const CropScanner = ({ open, onOpenChange }: CropScannerProps) => {
             <DialogTitle>Scan Crop Image</DialogTitle>
             <DialogDescription>
               {mode === 'select' && 'Choose how you want to capture the crop image'}
-              {mode === 'camera' && 'Position your camera to capture the crop'}
+              {mode === 'camera' && 'Position your camera to capture the crop leaf'}
               {mode === 'upload' && 'Review your selected image'}
             </DialogDescription>
           </DialogHeader>
@@ -238,6 +300,13 @@ export const CropScanner = ({ open, onOpenChange }: CropScannerProps) => {
           {mode === 'upload' && renderUploadMode()}
         </DialogContent>
       </Dialog>
+
+      <DiseaseResults
+        open={showResults}
+        onOpenChange={setShowResults}
+        analysisResult={analysisResult}
+        imageData={capturedImage}
+      />
     </>
   )
 }

@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Plant, Bug, FirstAid, CloudSun, MapPin, Scales } from '@phosphor-icons/react'
 import { FarmerProfile } from '@/lib/types'
 import { CropScanner } from '@/components/CropScanner'
+import { ScanHistory } from '@/components/ScanHistory'
 
 interface FarmerDashboardProps {
   userName: string
@@ -105,33 +106,37 @@ export const FarmerDashboard = ({ userName, profile }: FarmerDashboardProps) => 
         </Card>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <CloudSun className="text-primary" size={24} weight="fill" />
-            Weather & Alerts
-          </CardTitle>
-          <CardDescription>Current conditions and upcoming advisories for {profile.region}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-3">
-            <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
-              <div>
-                <p className="font-medium">Weather Alert</p>
-                <p className="text-sm text-muted-foreground">Moderate rainfall expected in 2 days</p>
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <CloudSun className="text-primary" size={24} weight="fill" />
+              Weather & Alerts
+            </CardTitle>
+            <CardDescription>Current conditions and upcoming advisories for {profile.region}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
+                <div>
+                  <p className="font-medium">Weather Alert</p>
+                  <p className="text-sm text-muted-foreground">Moderate rainfall expected in 2 days</p>
+                </div>
+                <Badge variant="secondary">Advisory</Badge>
               </div>
-              <Badge variant="secondary">Advisory</Badge>
-            </div>
-            <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
-              <div>
-                <p className="font-medium">Crop Health Status</p>
-                <p className="text-sm text-muted-foreground">No active disease alerts for your region</p>
+              <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
+                <div>
+                  <p className="font-medium">Crop Health Status</p>
+                  <p className="text-sm text-muted-foreground">No active disease alerts for your region</p>
+                </div>
+                <Badge className="bg-accent text-accent-foreground">Good</Badge>
               </div>
-              <Badge className="bg-accent text-accent-foreground">Good</Badge>
             </div>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+
+        <ScanHistory />
+      </div>
 
       <CropScanner open={scannerOpen} onOpenChange={setScannerOpen} />
     </div>

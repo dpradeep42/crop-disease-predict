@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react'
-import { useKV } from '@github/spark/hooks'
 import { User, AuthSession, LoginFormData, RegisterFormData } from '@/lib/types'
-import { hashPassword, verifyPassword, createSession, isSessionValid } from '@/lib/auth'
+import { isSessionValid } from '@/lib/auth'
 import { supabase } from '@/lib/supabase'
 
 interface AuthContextType {
@@ -27,8 +26,6 @@ export const useAuth = () => {
 }
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
-  const [users, setUsers] = useKV<User[]>('users', [])
-  const [session, setSession] = useKV<AuthSession | null>('session', null)
   const [user, setUser] = React.useState<User | null>(null)
   const [supabaseUser, setSupabaseUser] = React.useState<any>(null)
   const [isLoading, setIsLoading] = React.useState(true)
@@ -39,15 +36,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
       if (supabaseSession?.user) {
         setSupabaseUser(supabaseSession.user)
-      }
-
-      if (session && isSessionValid(session) && users) {
-        const currentUser = users.find(u => u.id === session.userId)
-        if (currentUser) {
-          setUser(currentUser)
-        } else {
-          setSession(null)
-        }
+        await loadUserProfile(supabaseSession.user.id)
       }
       setIsLoading(false)
     }
@@ -57,127 +46,160 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       (async () => {
         if (session?.user) {
           setSupabaseUser(session.user)
+          await loadUserProfile(session.user.id)
         } else {
           setSupabaseUser(null)
+          setUser(null)
         }
       })()
     })
 
     return () => subscription.unsubscribe()
-  }, [session, users])
+  }, [])
+
+  const loadUserProfile = async (userId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .select('*')
+        .eq('id', userId)
+        .single()
+
+      if (error) {
+        console.error('Error loading profile:', error)
+        return
+      }
+
+      if (data) {
+        const userProfile: User = {
+          id: data.id,
+          name: data.name,
+          email: data.email,
+          phone: data.phone || '',
+          role: data.role,
+          createdAt: data.created_at,
+          passwordHash: '',
+          profile: data.profile_data
+        }
+        setUser(userProfile)
+      }
+    } catch (error) {
+      console.error('Error loading profile:', error)
+    }
+  }
 
   const login = async (data: LoginFormData): Promise<{ success: boolean; error?: string }> => {
-    if (!users) {
-      return { success: false, error: 'System error. Please try again.' }
-    }
-
-    const foundUser = users.find(u => u.email === data.email.toLowerCase())
-
-    if (!foundUser) {
-      return { success: false, error: 'No account found with this email' }
-    }
-
-    const isValid = await verifyPassword(data.password, foundUser.passwordHash)
-
-    if (!isValid) {
-      return { success: false, error: 'Incorrect password' }
-    }
-
-    const { error } = await supabase.auth.signInWithPassword({
-      email: data.email,
-      password: data.password,
-    })
-
-    if (error && error.message.includes('Invalid')) {
-      const signUpResult = await supabase.auth.signUp({
+    try {
+      const { data: authData, error } = await supabase.auth.signInWithPassword({
         email: data.email,
         password: data.password,
       })
 
-      if (signUpResult.error) {
-        console.error('Supabase signup error:', signUpResult.error)
+      if (error) {
+        return { success: false, error: error.message }
       }
+
+      if (authData.user) {
+        setSupabaseUser(authData.user)
+        await loadUserProfile(authData.user.id)
+        return { success: true }
+      }
+
+      return { success: false, error: 'Login failed' }
+    } catch (error: any) {
+      return { success: false, error: error.message || 'An error occurred during login' }
     }
-
-    const newSession = createSession(foundUser.id, data.rememberMe)
-    setSession(newSession)
-    setUser(foundUser)
-
-    return { success: true }
   }
 
   const register = async (data: RegisterFormData): Promise<{ success: boolean; error?: string }> => {
-    if (!users) {
-      return { success: false, error: 'System error. Please try again.' }
-    }
+    try {
+      const { data: authData, error: signUpError } = await supabase.auth.signUp({
+        email: data.email,
+        password: data.password,
+      })
 
-    const existingUser = users.find(u => u.email === data.email.toLowerCase())
-
-    if (existingUser) {
-      return { success: false, error: 'An account with this email already exists' }
-    }
-
-    if (data.phone) {
-      const existingPhone = users.find(u => u.phone === data.phone)
-      if (existingPhone) {
-        return { success: false, error: 'An account with this phone number already exists' }
+      if (signUpError) {
+        return { success: false, error: signUpError.message }
       }
+
+      if (!authData.user) {
+        return { success: false, error: 'Registration failed' }
+      }
+
+      const { error: profileError } = await supabase
+        .from('user_profiles')
+        .insert({
+          id: authData.user.id,
+          email: data.email.toLowerCase(),
+          name: data.name,
+          phone: data.phone,
+          role: data.role,
+          profile_data: data.profile
+        })
+
+      if (profileError) {
+        console.error('Error creating profile:', profileError)
+        await supabase.auth.signOut()
+        return { success: false, error: 'Failed to create user profile' }
+      }
+
+      setSupabaseUser(authData.user)
+      await loadUserProfile(authData.user.id)
+
+      return { success: true }
+    } catch (error: any) {
+      return { success: false, error: error.message || 'An error occurred during registration' }
     }
-
-    const passwordHash = await hashPassword(data.password)
-
-    const newUser: User = {
-      id: `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      name: data.name,
-      email: data.email.toLowerCase(),
-      phone: data.phone,
-      role: data.role,
-      createdAt: new Date().toISOString(),
-      passwordHash,
-      profile: data.profile as any
-    }
-
-    const { error } = await supabase.auth.signUp({
-      email: data.email,
-      password: data.password,
-    })
-
-    if (error) {
-      console.error('Supabase signup error:', error)
-    }
-
-    setUsers(currentUsers => [...(currentUsers || []), newUser])
-
-    const newSession = createSession(newUser.id, true)
-    setSession(newSession)
-    setUser(newUser)
-
-    return { success: true }
   }
 
-  const logout = () => {
-    supabase.auth.signOut()
-    setSession(null)
+  const logout = async () => {
+    await supabase.auth.signOut()
     setUser(null)
     setSupabaseUser(null)
   }
 
   const updateProfile = async (updates: Partial<User>) => {
-    if (!user || !users) return
+    if (!supabaseUser) return
 
-    const updatedUser = { ...user, ...updates }
-    setUsers(currentUsers =>
-      (currentUsers || []).map(u => u.id === user.id ? updatedUser : u)
-    )
-    setUser(updatedUser)
+    try {
+      const profileData: any = {
+        name: updates.name,
+        phone: updates.phone,
+      }
+
+      if (updates.profile) {
+        profileData.profile_data = updates.profile
+      }
+
+      const { error } = await supabase
+        .from('user_profiles')
+        .update(profileData)
+        .eq('id', supabaseUser.id)
+
+      if (error) {
+        console.error('Error updating profile:', error)
+        return
+      }
+
+      await loadUserProfile(supabaseUser.id)
+    } catch (error) {
+      console.error('Error updating profile:', error)
+    }
   }
+
+  const session: AuthSession | null = supabaseUser ? {
+    userId: supabaseUser.id,
+    token: '',
+    expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    rememberMe: false
+  } : null
 
   return (
     <AuthContext.Provider
       value={{
         user,
-        session: session || null,
-        isAuthenticated: !!user && !!session && isSessionValid(session),
+        session,
+        isAuthenticated: !!user && !!supabaseUser,
         isLoading,
         login,
         register,

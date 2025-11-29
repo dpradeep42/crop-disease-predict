@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { User, AuthSession, LoginFormData, RegisterFormData } from '@/lib/types'
 import { isSessionValid } from '@/lib/auth'
 import { supabase } from '@/lib/supabase'
+import { toast } from 'sonner'
 
 interface AuthContextType {
   user: User | null
@@ -32,13 +33,18 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   React.useEffect(() => {
     const initAuth = async () => {
-      const { data: { session: supabaseSession } } = await supabase.auth.getSession()
+      try {
+        const { data: { session: supabaseSession } } = await supabase.auth.getSession()
 
-      if (supabaseSession?.user) {
-        setSupabaseUser(supabaseSession.user)
-        await loadUserProfile(supabaseSession.user.id)
+        if (supabaseSession?.user) {
+          setSupabaseUser(supabaseSession.user)
+          await loadUserProfile(supabaseSession.user.id)
+        }
+      } catch (error) {
+        console.error('Init auth error:', error)
+      } finally {
+        setIsLoading(false)
       }
-      setIsLoading(false)
     }
     initAuth()
 
@@ -63,7 +69,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         .from('user_profiles')
         .select('*')
         .eq('id', userId)
-        .single()
+        .maybeSingle()
 
       if (error) {
         console.error('Error loading profile:', error)
@@ -116,6 +122,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       const { data: authData, error: signUpError } = await supabase.auth.signUp({
         email: data.email,
         password: data.password,
+        options: {
+          emailRedirectTo: window.location.origin,
+          data: {
+            name: data.name,
+            phone: data.phone || '',
+          }
+        }
       })
 
       if (signUpError) {
@@ -126,10 +139,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         return { success: false, error: 'Registration failed' }
       }
 
+      const userId = authData.user.id
+
       const { error: profileError } = await supabase
         .from('user_profiles')
         .insert({
-          id: authData.user.id,
+          id: userId,
           email: data.email.toLowerCase(),
           name: data.name,
           phone: data.phone,
@@ -139,15 +154,28 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
       if (profileError) {
         console.error('Error creating profile:', profileError)
+
+        if (profileError.message.includes('duplicate') || profileError.code === '23505') {
+          await loadUserProfile(userId)
+          setSupabaseUser(authData.user)
+          return { success: true }
+        }
+
         await supabase.auth.signOut()
-        return { success: false, error: 'Failed to create user profile' }
+        return { success: false, error: 'Failed to create user profile. Please try again.' }
       }
 
-      setSupabaseUser(authData.user)
-      await loadUserProfile(authData.user.id)
+      if (authData.session) {
+        setSupabaseUser(authData.user)
+        await loadUserProfile(userId)
+        toast.success('Account created successfully!')
+      } else {
+        toast.info('Please check your email to confirm your account.')
+      }
 
       return { success: true }
     } catch (error: any) {
+      console.error('Registration error:', error)
       return { success: false, error: error.message || 'An error occurred during registration' }
     }
   }

@@ -8,6 +8,7 @@ import { Separator } from '@/components/ui/separator'
 import { CheckCircle, Warning, X, FirstAid, Leaf, Bug } from '@phosphor-icons/react'
 import { AnalysisResult } from '@/lib/disease-detection'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { supabase } from '@/lib/supabase'
 
 interface DiseaseResultsProps {
   open: boolean
@@ -49,32 +50,27 @@ export const DiseaseResults = ({ open, onOpenChange, analysisResult, imageData }
   const fetchDiseaseData = async (diseaseName: string) => {
     setLoading(true)
     try {
-      const diseaseResponse = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/diseases?name=eq.${encodeURIComponent(diseaseName)}`,
-        {
-          headers: {
-            'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
-          }
-        }
-      )
+      const { data: diseases, error: diseaseError } = await supabase
+        .from('diseases')
+        .select('*')
+        .eq('name', diseaseName)
+        .limit(1)
 
-      const diseases = await diseaseResponse.json()
-      if (diseases && diseases.length > 0) {
+      if (diseaseError) {
+        console.error('Error fetching disease:', diseaseError)
+      } else if (diseases && diseases.length > 0) {
         setDiseaseInfo(diseases[0])
 
-        const remediesResponse = await fetch(
-          `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/remedies?disease_id=eq.${diseases[0].id}`,
-          {
-            headers: {
-              'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-              'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
-            }
-          }
-        )
+        const { data: remediesData, error: remediesError } = await supabase
+          .from('remedies')
+          .select('*')
+          .eq('disease_id', diseases[0].id)
 
-        const remediesData = await remediesResponse.json()
-        setRemedies(remediesData || [])
+        if (remediesError) {
+          console.error('Error fetching remedies:', remediesError)
+        } else {
+          setRemedies(remediesData || [])
+        }
       }
     } catch (error) {
       console.error('Error fetching disease data:', error)

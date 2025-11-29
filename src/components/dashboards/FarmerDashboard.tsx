@@ -14,6 +14,11 @@ interface FarmerDashboardProps {
 
 export const FarmerDashboard = ({ userName, profile }: FarmerDashboardProps) => {
   const [scannerOpen, setScannerOpen] = useState(false)
+  const [refreshTrigger, setRefreshTrigger] = useState(0)
+
+  const handleScanComplete = () => {
+    setRefreshTrigger(prev => prev + 1)
+  }
 
   return (
     <div className="space-y-6">
@@ -135,10 +140,10 @@ export const FarmerDashboard = ({ userName, profile }: FarmerDashboardProps) => 
           </CardContent>
         </Card>
 
-        <ScanHistory />
+        <ScanHistory refreshTrigger={refreshTrigger} />
       </div>
 
-      <CropScanner open={scannerOpen} onOpenChange={setScannerOpen} />
+      <CropScanner open={scannerOpen} onOpenChange={setScannerOpen} onScanComplete={handleScanComplete} />
     </div>
   )
 }

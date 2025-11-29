@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { useKV } from '@github/spark/hooks'
 import { User, AuthSession, LoginFormData, RegisterFormData } from '@/lib/types'
 import { hashPassword, verifyPassword, createSession, isSessionValid } from '@/lib/auth'
+import { supabase } from '@/lib/supabase'
 
 interface AuthContextType {
   user: User | null
@@ -12,6 +13,7 @@ interface AuthContextType {
   register: (data: RegisterFormData) => Promise<{ success: boolean; error?: string }>
   logout: () => void
   updateProfile: (updates: Partial<User>) => Promise<void>
+  supabaseUser: any
 }
 
 const AuthContext = React.createContext<AuthContextType | undefined>(undefined)
@@ -28,10 +30,17 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [users, setUsers] = useKV<User[]>('users', [])
   const [session, setSession] = useKV<AuthSession | null>('session', null)
   const [user, setUser] = React.useState<User | null>(null)
+  const [supabaseUser, setSupabaseUser] = React.useState<any>(null)
   const [isLoading, setIsLoading] = React.useState(true)
 
   React.useEffect(() => {
     const initAuth = async () => {
+      const { data: { session: supabaseSession } } = await supabase.auth.getSession()
+
+      if (supabaseSession?.user) {
+        setSupabaseUser(supabaseSession.user)
+      }
+
       if (session && isSessionValid(session) && users) {
         const currentUser = users.find(u => u.id === session.userId)
         if (currentUser) {
@@ -43,29 +52,57 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setIsLoading(false)
     }
     initAuth()
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      (async () => {
+        if (session?.user) {
+          setSupabaseUser(session.user)
+        } else {
+          setSupabaseUser(null)
+        }
+      })()
+    })
+
+    return () => subscription.unsubscribe()
   }, [session, users])
 
   const login = async (data: LoginFormData): Promise<{ success: boolean; error?: string }> => {
     if (!users) {
       return { success: false, error: 'System error. Please try again.' }
     }
-    
+
     const foundUser = users.find(u => u.email === data.email.toLowerCase())
-    
+
     if (!foundUser) {
       return { success: false, error: 'No account found with this email' }
     }
-    
+
     const isValid = await verifyPassword(data.password, foundUser.passwordHash)
-    
+
     if (!isValid) {
       return { success: false, error: 'Incorrect password' }
     }
-    
+
+    const { error } = await supabase.auth.signInWithPassword({
+      email: data.email,
+      password: data.password,
+    })
+
+    if (error && error.message.includes('Invalid')) {
+      const signUpResult = await supabase.auth.signUp({
+        email: data.email,
+        password: data.password,
+      })
+
+      if (signUpResult.error) {
+        console.error('Supabase signup error:', signUpResult.error)
+      }
+    }
+
     const newSession = createSession(foundUser.id, data.rememberMe)
     setSession(newSession)
     setUser(foundUser)
-    
+
     return { success: true }
   }
 
@@ -73,22 +110,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     if (!users) {
       return { success: false, error: 'System error. Please try again.' }
     }
-    
+
     const existingUser = users.find(u => u.email === data.email.toLowerCase())
-    
+
     if (existingUser) {
       return { success: false, error: 'An account with this email already exists' }
     }
-    
+
     if (data.phone) {
       const existingPhone = users.find(u => u.phone === data.phone)
       if (existingPhone) {
         return { success: false, error: 'An account with this phone number already exists' }
       }
     }
-    
+
     const passwordHash = await hashPassword(data.password)
-    
+
     const newUser: User = {
       id: `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       name: data.name,
@@ -99,26 +136,37 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       passwordHash,
       profile: data.profile as any
     }
-    
+
+    const { error } = await supabase.auth.signUp({
+      email: data.email,
+      password: data.password,
+    })
+
+    if (error) {
+      console.error('Supabase signup error:', error)
+    }
+
     setUsers(currentUsers => [...(currentUsers || []), newUser])
-    
+
     const newSession = createSession(newUser.id, true)
     setSession(newSession)
     setUser(newUser)
-    
+
     return { success: true }
   }
 
   const logout = () => {
+    supabase.auth.signOut()
     setSession(null)
     setUser(null)
+    setSupabaseUser(null)
   }
 
   const updateProfile = async (updates: Partial<User>) => {
     if (!user || !users) return
-    
+
     const updatedUser = { ...user, ...updates }
-    setUsers(currentUsers => 
+    setUsers(currentUsers =>
       (currentUsers || []).map(u => u.id === user.id ? updatedUser : u)
     )
     setUser(updatedUser)
@@ -134,7 +182,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         login,
         register,
         logout,
-        updateProfile
+        updateProfile,
+        supabaseUser
       }}
     >
       {children}

@@ -4,17 +4,19 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Camera, Upload, X, ArrowClockwise } from '@phosphor-icons/react'
 import { toast } from 'sonner'
-import { analyzeImage, AnalysisResult } from '@/lib/disease-detection'
+import { AnalysisResult } from '@/lib/disease-detection'
 import { DiseaseResults } from './DiseaseResults'
 import { useAuth } from '@/hooks/use-auth'
+import { supabase } from '@/lib/supabase'
 
 interface CropScannerProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  onScanComplete?: () => void
 }
 
-export const CropScanner = ({ open, onOpenChange }: CropScannerProps) => {
-  const { user } = useAuth()
+export const CropScanner = ({ open, onOpenChange, onScanComplete }: CropScannerProps) => {
+  const { user, supabaseUser } = useAuth()
   const [mode, setMode] = useState<'select' | 'camera' | 'upload'>('select')
   const [capturedImage, setCapturedImage] = useState<string | null>(null)
   const [stream, setStream] = useState<MediaStream | null>(null)
@@ -73,7 +75,7 @@ export const CropScanner = ({ open, onOpenChange }: CropScannerProps) => {
       const ctx = canvas.getContext('2d')
       if (ctx) {
         ctx.drawImage(video, 0, 0)
-        const imageData = canvas.toDataURL('image/jpeg')
+        const imageData = canvas.toDataURL('image/jpeg', 0.8)
         setCapturedImage(imageData)
         if (stream) {
           stream.getTracks().forEach(track => track.stop())
@@ -109,53 +111,74 @@ export const CropScanner = ({ open, onOpenChange }: CropScannerProps) => {
     if (!capturedImage) return
 
     setAnalyzing(true)
-    toast.loading('Analyzing image...', { id: 'analyzing' })
+    const toastId = toast.loading('Analyzing image with AI...')
 
     try {
-      const result = await analyzeImage(capturedImage)
+      const { data: { session } } = await supabase.auth.getSession()
+
+      if (!session) {
+        toast.error('Please log in to analyze images', { id: toastId })
+        return
+      }
+
+      const functionUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/analyze-crop-disease`
+
+      const response = await fetch(functionUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ imageData: capturedImage })
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Analysis failed')
+      }
+
+      const result: AnalysisResult = await response.json()
       setAnalysisResult(result)
 
-      if (user) {
+      if (supabaseUser) {
         await saveScanToDatabase(result)
       }
 
-      toast.success('Analysis complete!', { id: 'analyzing' })
+      toast.success('Analysis complete!', { id: toastId })
       onOpenChange(false)
       setShowResults(true)
-    } catch (error) {
-      toast.error('Failed to analyze image. Please try again.', { id: 'analyzing' })
+
+      if (onScanComplete) {
+        onScanComplete()
+      }
+    } catch (error: any) {
       console.error('Analysis error:', error)
+      toast.error(error.message || 'Failed to analyze image. Please try again.', { id: toastId })
     } finally {
       setAnalyzing(false)
     }
   }
 
   const saveScanToDatabase = async (result: AnalysisResult) => {
-    if (!user || !capturedImage) return
+    if (!supabaseUser || !capturedImage) return
 
     try {
-      await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/crop_scans`,
-        {
-          method: 'POST',
-          headers: {
-            'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=minimal'
-          },
-          body: JSON.stringify({
-            user_id: user.id,
-            image_data: capturedImage,
-            is_leaf: result.leafDetection.isLeaf,
-            confidence_score: result.leafDetection.confidence,
-            disease_detected: result.diseaseDetection?.diseaseDetected,
-            disease_confidence: result.diseaseDetection?.confidence,
-            severity: result.diseaseDetection?.severity,
-            analyzed_at: new Date().toISOString()
-          })
-        }
-      )
+      const { error } = await supabase
+        .from('crop_scans')
+        .insert({
+          user_id: supabaseUser.id,
+          image_data: capturedImage,
+          is_leaf: result.leafDetection.isLeaf,
+          confidence_score: result.leafDetection.confidence,
+          disease_detected: result.diseaseDetection?.diseaseDetected,
+          disease_confidence: result.diseaseDetection?.confidence,
+          severity: result.diseaseDetection?.severity,
+          analyzed_at: new Date().toISOString()
+        })
+
+      if (error) {
+        console.error('Error saving scan:', error)
+      }
     } catch (error) {
       console.error('Error saving scan:', error)
     }
@@ -165,6 +188,12 @@ export const CropScanner = ({ open, onOpenChange }: CropScannerProps) => {
     setCapturedImage(null)
     setAnalysisResult(null)
     setMode('select')
+  }
+
+  const handleResultsClose = () => {
+    setShowResults(false)
+    setCapturedImage(null)
+    setAnalysisResult(null)
   }
 
   const renderSelectMode = () => (
@@ -179,7 +208,7 @@ export const CropScanner = ({ open, onOpenChange }: CropScannerProps) => {
           </div>
           <div>
             <h3 className="font-semibold text-lg">Take Photo</h3>
-            <p className="text-sm text-muted-foreground">Use your camera to capture crop image</p>
+            <p className="text-sm text-muted-foreground">Use your camera to capture crop leaf</p>
           </div>
         </div>
       </Card>
@@ -196,7 +225,7 @@ export const CropScanner = ({ open, onOpenChange }: CropScannerProps) => {
           </div>
           <div>
             <h3 className="font-semibold text-lg">Upload Image</h3>
-            <p className="text-sm text-muted-foreground">Select an image from your device</p>
+            <p className="text-sm text-muted-foreground">Select a leaf image from your device</p>
           </div>
         </div>
       </Card>
@@ -290,8 +319,8 @@ export const CropScanner = ({ open, onOpenChange }: CropScannerProps) => {
           <DialogHeader>
             <DialogTitle>Scan Crop Image</DialogTitle>
             <DialogDescription>
-              {mode === 'select' && 'Choose how you want to capture the crop image'}
-              {mode === 'camera' && 'Position your camera to capture the crop leaf'}
+              {mode === 'select' && 'Choose how you want to capture the crop leaf'}
+              {mode === 'camera' && 'Position your camera to capture the crop leaf clearly'}
               {mode === 'upload' && 'Review your selected image'}
             </DialogDescription>
           </DialogHeader>
@@ -303,7 +332,7 @@ export const CropScanner = ({ open, onOpenChange }: CropScannerProps) => {
 
       <DiseaseResults
         open={showResults}
-        onOpenChange={setShowResults}
+        onOpenChange={handleResultsClose}
         analysisResult={analysisResult}
         imageData={capturedImage}
       />

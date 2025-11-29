@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { ClockClockwise, Warning, CheckCircle } from '@phosphor-icons/react'
 import { useAuth } from '@/hooks/use-auth'
+import { supabase } from '@/lib/supabase'
 
 interface ScanRecord {
   id: string
@@ -18,34 +18,40 @@ interface ScanRecord {
   created_at: string
 }
 
-export const ScanHistory = () => {
-  const { user } = useAuth()
+interface ScanHistoryProps {
+  refreshTrigger?: number
+}
+
+export const ScanHistory = ({ refreshTrigger }: ScanHistoryProps) => {
+  const { supabaseUser } = useAuth()
   const [scans, setScans] = useState<ScanRecord[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    if (user) {
+    if (supabaseUser) {
       fetchScans()
+    } else {
+      setLoading(false)
     }
-  }, [user])
+  }, [supabaseUser, refreshTrigger])
 
   const fetchScans = async () => {
-    if (!user) return
+    if (!supabaseUser) return
 
     setLoading(true)
     try {
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/crop_scans?user_id=eq.${user.id}&order=created_at.desc&limit=10`,
-        {
-          headers: {
-            'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
-          }
-        }
-      )
+      const { data, error } = await supabase
+        .from('crop_scans')
+        .select('*')
+        .eq('user_id', supabaseUser.id)
+        .order('created_at', { ascending: false })
+        .limit(10)
 
-      const data = await response.json()
-      setScans(data || [])
+      if (error) {
+        console.error('Error fetching scans:', error)
+      } else {
+        setScans(data || [])
+      }
     } catch (error) {
       console.error('Error fetching scans:', error)
     } finally {
@@ -71,6 +77,20 @@ export const ScanHistory = () => {
       case 'low': return 'bg-accent text-accent-foreground'
       default: return 'bg-muted text-muted-foreground'
     }
+  }
+
+  if (!supabaseUser) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <ClockClockwise size={24} weight="fill" />
+            Scan History
+          </CardTitle>
+          <CardDescription>Please log in to view scan history</CardDescription>
+        </CardHeader>
+      </Card>
+    )
   }
 
   if (loading) {
